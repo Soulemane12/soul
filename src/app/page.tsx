@@ -1,103 +1,271 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect } from 'react';
+import { Settings } from 'lucide-react';
+import Sidebar from '@/components/Sidebar';
+import ChatInterface from '@/components/ChatInterface';
+import ChatSettings from '@/components/ChatSettings';
+import { Chat, FileAttachment } from '@/types';
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [currentChat, setCurrentChat] = useState<Chat | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  // Load chats on component mount
+  useEffect(() => {
+    loadChats();
+  }, []);
+
+  const loadChats = async () => {
+    try {
+      const response = await fetch('/api/chats');
+      if (response.ok) {
+        const chatsData = await response.json();
+        setChats(chatsData);
+      }
+    } catch (error) {
+      console.error('Error loading chats:', error);
+    }
+  };
+
+  const createNewChat = async () => {
+    try {
+      const response = await fetch('/api/chats', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: 'New Chat',
+          model: 'llama-3.3-70b-versatile',
+          mode: 'regular',
+          webSearch: false,
+          browserSearch: false,
+        }),
+      });
+
+      if (response.ok) {
+        const newChat = await response.json();
+        setChats(prev => [newChat, ...prev]);
+        setCurrentChat(newChat);
+      }
+    } catch (error) {
+      console.error('Error creating chat:', error);
+    }
+  };
+
+  const selectChat = async (chatId: string) => {
+    try {
+      const response = await fetch(`/api/chats/${chatId}`);
+      if (response.ok) {
+        const chat = await response.json();
+        setCurrentChat(chat);
+      }
+    } catch (error) {
+      console.error('Error loading chat:', error);
+    }
+  };
+
+  const deleteChat = async (chatId: string) => {
+    try {
+      const response = await fetch(`/api/chats/${chatId}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        setChats(prev => prev.filter(chat => chat.id !== chatId));
+        if (currentChat?.id === chatId) {
+          setCurrentChat(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting chat:', error);
+    }
+  };
+
+  const renameChat = async (chatId: string, newTitle: string) => {
+    try {
+      const response = await fetch(`/api/chats/${chatId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title: newTitle }),
+      });
+
+      if (response.ok) {
+        const updatedChat = await response.json();
+        setChats(prev => prev.map(chat => chat.id === chatId ? updatedChat : chat));
+        if (currentChat?.id === chatId) {
+          setCurrentChat(updatedChat);
+        }
+      }
+    } catch (error) {
+      console.error('Error renaming chat:', error);
+    }
+  };
+
+  const updateChat = async (updates: Partial<Chat>) => {
+    if (!currentChat) return;
+
+    try {
+      const response = await fetch(`/api/chats/${currentChat.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updates),
+      });
+
+      if (response.ok) {
+        const updatedChat = await response.json();
+        setCurrentChat(updatedChat);
+        setChats(prev => prev.map(chat => chat.id === currentChat.id ? updatedChat : chat));
+      }
+    } catch (error) {
+      console.error('Error updating chat:', error);
+    }
+  };
+
+  const sendMessage = async (content: string, attachments?: FileAttachment[]) => {
+    if (!currentChat || (!content.trim() && (!attachments || attachments.length === 0))) return;
+
+    setIsLoading(true);
+
+    try {
+      // Add user message
+      const userMessageResponse = await fetch(`/api/chats/${currentChat.id}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          role: 'user',
+          content,
+          attachments,
+        }),
+      });
+
+      if (!userMessageResponse.ok) {
+        throw new Error('Failed to add user message');
+      }
+
+      const userMessage = await userMessageResponse.json();
+
+      // Update current chat with user message
+      const updatedChat = {
+        ...currentChat,
+        messages: [...currentChat.messages, userMessage],
+      };
+      setCurrentChat(updatedChat);
+
+      // Prepare messages for API call
+      const messages = updatedChat.messages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      // Get AI response
+      const completionResponse = await fetch('/api/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages,
+          model: currentChat.model,
+          temperature: 0.7,
+          maxTokens: 1024,
+          stream: false,
+          reasoningFormat: currentChat.mode === 'reasoning' ? 'parsed' : undefined,
+          includeReasoning: currentChat.mode === 'reasoning',
+          webSearch: currentChat.webSearch,
+          browserSearch: currentChat.browserSearch,
+        }),
+      });
+
+      if (!completionResponse.ok) {
+        throw new Error('Failed to get AI response');
+      }
+
+      const completion = await completionResponse.json();
+      const assistantMessage = completion.choices[0]?.message;
+
+      if (assistantMessage) {
+        // Add assistant message
+        const assistantMessageResponse = await fetch(`/api/chats/${currentChat.id}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            role: 'assistant',
+            content: assistantMessage.content,
+            reasoning: assistantMessage.reasoning,
+          }),
+        });
+
+        if (assistantMessageResponse.ok) {
+          const newAssistantMessage = await assistantMessageResponse.json();
+          
+          // Update current chat with assistant message
+          const finalChat = {
+            ...updatedChat,
+            messages: [...updatedChat.messages, newAssistantMessage],
+          };
+          setCurrentChat(finalChat);
+          
+          // Update chats list
+          setChats(prev => prev.map(chat => chat.id === currentChat.id ? finalChat : chat));
+        }
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="h-screen flex bg-gray-50 dark:bg-gray-900">
+      <Sidebar
+        chats={chats}
+        currentChatId={currentChat?.id || null}
+        onChatSelect={selectChat}
+        onNewChat={createNewChat}
+        onDeleteChat={deleteChat}
+        onRenameChat={renameChat}
+      />
+      
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex items-center justify-between">
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
+            {process.env.NEXT_PUBLIC_APP_NAME || 'Groq AI Chatbot'}
+          </h1>
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            <Settings size={20} className="text-gray-600 dark:text-gray-400" />
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        <ChatInterface
+          chat={currentChat}
+          onSendMessage={sendMessage}
+          isLoading={isLoading}
+        />
+      </div>
+
+      <ChatSettings
+        chat={currentChat}
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onUpdateChat={updateChat}
+      />
     </div>
   );
 }
