@@ -39,25 +39,60 @@ export default function ChatInterface({ chat, onSendMessage, isLoading }: ChatIn
     if (!files) return;
 
     setIsUploading(true);
+    const uploadPromises = [];
+    
     try {
       for (const file of Array.from(files)) {
+        // Check file size before upload (50MB limit)
+        const maxSize = 50 * 1024 * 1024; // 50MB
+        if (file.size > maxSize) {
+          alert(`File "${file.name}" is too large. Maximum size is 50MB.`);
+          continue;
+        }
+
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch('/api/upload', {
+        const uploadPromise = fetch('/api/upload', {
           method: 'POST',
           body: formData,
+        }).then(async (response) => {
+          if (response.ok) {
+            const attachment = await response.json();
+            setAttachments(prev => [...prev, attachment]);
+            return { success: true, file: file.name };
+          } else {
+            const errorText = await response.text();
+            console.error('Upload failed:', errorText);
+            return { success: false, file: file.name, error: errorText };
+          }
+        }).catch((error) => {
+          console.error('Upload error:', error);
+          return { success: false, file: file.name, error: error.message };
         });
 
-        if (response.ok) {
-          const attachment = await response.json();
-          setAttachments(prev => [...prev, attachment]);
-        } else {
-          console.error('Upload failed:', await response.text());
-        }
+        uploadPromises.push(uploadPromise);
       }
+
+      // Wait for all uploads to complete
+      const results = await Promise.all(uploadPromises);
+      
+      // Show results
+      const successful = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
+      
+      if (successful.length > 0) {
+        console.log(`Successfully uploaded ${successful.length} file(s)`);
+      }
+      
+      if (failed.length > 0) {
+        const failedFiles = failed.map(f => f.file).join(', ');
+        alert(`Failed to upload: ${failedFiles}`);
+      }
+      
     } catch (error) {
       console.error('Upload error:', error);
+      alert('An error occurred while uploading files');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -151,13 +186,25 @@ export default function ChatInterface({ chat, onSendMessage, isLoading }: ChatIn
                   {message.attachments.map((attachment) => (
                     <div
                       key={attachment.id}
-                      className="flex items-center gap-2 p-2 bg-gray-200 dark:bg-gray-600 rounded"
+                      className="p-3 bg-gray-200 dark:bg-gray-600 rounded-lg"
                     >
-                      <FileText size={16} />
-                      <span className="text-sm">{attachment.name}</span>
-                      <span className="text-xs opacity-75">
-                        ({formatFileSize(attachment.size)})
-                      </span>
+                      <div className="flex items-center gap-2 mb-2">
+                        <FileText size={16} />
+                        <span className="text-sm font-medium">{attachment.name}</span>
+                        <span className="text-xs opacity-75">
+                          ({formatFileSize(attachment.size)})
+                        </span>
+                      </div>
+                      {attachment.textContent && (
+                        <div className="mt-2 p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs max-h-32 overflow-y-auto">
+                          <div className="font-medium mb-1">File Content:</div>
+                          <div className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+                            {attachment.textContent.length > 500 
+                              ? `${attachment.textContent.substring(0, 500)}...` 
+                              : attachment.textContent}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -212,20 +259,37 @@ export default function ChatInterface({ chat, onSendMessage, isLoading }: ChatIn
       <div className="border-t border-gray-200 dark:border-gray-700 p-4">
         {/* Attachments Preview */}
         {attachments.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-2">
+          <div className="mb-3 space-y-2">
             {attachments.map((attachment) => (
               <div
                 key={attachment.id}
-                className="flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-700 rounded-lg"
+                className="p-3 bg-gray-100 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600"
               >
-                <FileText size={16} />
-                <span className="text-sm">{attachment.name}</span>
-                <button
-                  onClick={() => removeAttachment(attachment.id)}
-                  className="text-red-500 hover:text-red-700"
-                >
-                  ×
-                </button>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <FileText size={16} />
+                    <span className="text-sm font-medium">{attachment.name}</span>
+                    <span className="text-xs text-gray-500">
+                      ({formatFileSize(attachment.size)})
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => removeAttachment(attachment.id)}
+                    className="text-red-500 hover:text-red-700 p-1"
+                  >
+                    ×
+                  </button>
+                </div>
+                {attachment.textContent && (
+                  <div className="mt-2 p-2 bg-white dark:bg-gray-800 rounded text-xs max-h-24 overflow-y-auto">
+                    <div className="font-medium mb-1 text-gray-600 dark:text-gray-400">Preview:</div>
+                    <div className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+                      {attachment.textContent.length > 200 
+                        ? `${attachment.textContent.substring(0, 200)}...` 
+                        : attachment.textContent}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

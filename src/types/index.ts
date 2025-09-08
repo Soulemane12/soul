@@ -13,6 +13,7 @@ export interface FileAttachment {
   type: string;
   size: number;
   content: string;
+  textContent?: string; // Extracted text content from the file
   uploadedAt: Date;
 }
 
